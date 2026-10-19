@@ -2,13 +2,15 @@ import * as THREE from 'three/webgpu'
 import { Game } from '../Game.js'
 
 /**
- * 「划地盘」领地围栏（数据驱动、纯视觉）
- * 读取 static/territory/territory.json，把 static/territory/fence.glb（竖立的木板栏杆件，
- * 宽沿局部 X、底面在 y=0）沿红框矩形四周首尾相接摆成一圈，作为"我的地盘"边界。
+ * 「划地盘」领地围栏（数据驱动、纯视觉、可多块）
+ * 读取 static/territory/territory.json 的 territories[]，把 static/territory/fence.glb
+ * （竖立的木板栏杆件，宽沿局部 X、底面在 y=0）沿每块矩形四周首尾相接摆成一圈。
+ *
+ * 须翊恒的右下角矩形保持原样。Peter 只追加一块矩形，用同一套原木栏杆。
  *
  * - 每件用 physics 射线贴地（复用 Floor.js 的 heightfield 碰撞体），落不到地面时兜底到水面高度
- * - 纯视觉：模型名不含 physical，addFromModel 不创建碰撞体，玩家可穿过（性能与实现最简）
- * - 改围栏范围/密度：只改 territory.json，无需动代码；重跑 scripts/territory-prepare.js 换件
+ * - 纯视觉：模型名不含 physical，addFromModel 不创建碰撞体，玩家可穿过
+ * - 改围栏范围/密度：只改 territory.json，无需动代码
  */
 export class Territory
 {
@@ -16,6 +18,7 @@ export class Territory
     {
         this.game = Game.getInstance()
         this.items = []
+        this.territories = []
         this.visible = true
 
         this.setFromDescription()
@@ -37,7 +40,8 @@ export class Territory
             // 尚未配置领地，静默跳过
         }
 
-        if(!description || !description.rect)
+        const territories = this.getTerritories(description)
+        if(!territories.length)
             return
 
         // 懒加载栏杆件
@@ -58,18 +62,45 @@ export class Territory
         if(!resource)
             return
 
-        // 量出栏杆件的"件长"（局部 X 包围盒宽度），据此决定首尾相接的间距
         const bounds = new THREE.Box3().setFromObject(resource.scene)
         const pieceLength = bounds.max.x - bounds.min.x
-        const scale = description.scale ?? 1
-        const step = pieceLength * scale * (description.overlap ?? 1)
 
-        const points = this.getPerimeterPoints(description.rect, step)
-
-        for(const point of points)
-            this.addSegment(resource.scene, point, scale, description)
+        for(const territory of territories)
+            this.buildTerritory(resource.scene, territory, pieceLength)
 
         this.setDebug()
+    }
+
+    getTerritories(_description)
+    {
+        if(!_description)
+            return []
+
+        if(Array.isArray(_description.territories) && _description.territories.length)
+            return _description.territories.filter((territory) => territory && territory.rect)
+
+        if(_description.rect)
+            return [ _description ]
+
+        return []
+    }
+
+    buildTerritory(_source, _territory, _pieceLength)
+    {
+        const scale = _territory.scale ?? 1
+        const step = _pieceLength * scale * (_territory.overlap ?? 1)
+        const points = this.getPerimeterPoints(_territory.rect, step)
+        const record = {
+            id: _territory.id ?? 'territory',
+            owner: _territory.owner ?? '',
+            rect: _territory.rect,
+            count: points.length,
+        }
+
+        for(const point of points)
+            this.addSegment(_source, point, scale, _territory)
+
+        this.territories.push(record)
     }
 
     getPerimeterPoints(_rect, _step)
